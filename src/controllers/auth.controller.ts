@@ -104,6 +104,7 @@ export class AuthController {
         userId: user.id,
         email: user.email,
         role: user.role,
+        name: user.name,
       });
       
       res.json({
@@ -112,8 +113,7 @@ export class AuthController {
         user: {
           id: user.id,
           email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
+          name: user.name,
           role: user.role,
         },
       });
