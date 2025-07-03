@@ -1,0 +1,131 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  TEACHER
+  LEARNER
+}
+
+enum LogStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  RESUBMITTED
+}
+
+enum Sex {
+  MALE
+  FEMALE
+  TRANSGENDER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  password  String
+  role      UserRole @default(LEARNER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  createdLogs     Log[]              @relation("LogCreator")
+  approvedLogs    Log[]              @relation("LogApprover")
+  teachingCourses Course[]           @relation("TeacherCourses")
+  enrolledCourses CourseEnrollment[]
+
+  @@map("users")
+}
+
+model Course {
+  id               String   @id @default(cuid())
+  title            String
+  name             String
+  enrollmentNumber String   @unique
+  facultyName      String
+  designation      String
+  hospitalName     String
+  location         String
+  contactProgram   String
+  startDate        DateTime
+  endDate          DateTime
+  status           String   @default("Active")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Foreign Keys
+  teacherId   String
+  teacher     User               @relation("TeacherCourses", fields: [teacherId], references: [id])
+  // Relations
+  enrollments CourseEnrollment[]
+  logs        Log[]
+
+  @@map("courses")
+}
+
+model CourseEnrollment {
+  id         String   @id @default(cuid())
+  courseId   String
+  learnerId  String
+  enrolledAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  course  Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  learner User   @relation(fields: [learnerId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, learnerId])
+  @@map("course_enrollments")
+}
+
+model Log {
+  id                  String    @id @default(cuid())
+  caseNo              String    @unique
+  date                DateTime
+  age                 Float
+  sex                 Sex
+  uhid                String
+  chiefComplaint      String    @db.Text
+  historyPresenting   String    @db.Text
+  pastHistory         String    @db.Text
+  personalHistory     String    @db.Text
+  familyHistory       String    @db.Text
+  clinicalExamination String    @db.Text
+  labExaminations     String    @db.Text
+  diagnosis           String    @db.Text
+  management          String    @db.Text
+  status              LogStatus @default(DRAFT)
+  rejectionReason     String?   @db.Text
+  teacherComments     String?   @db.Text
+
+  // Timestamps
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  submittedAt DateTime?
+  approvedAt  DateTime?
+  rejectedAt  DateTime?
+
+  // Foreign Keys
+  courseId     String
+  createdById  String
+  approvedById String?
+
+  // Relations
+  course     Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdBy  User   @relation("LogCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  approvedBy User?  @relation("LogApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@map("Logs")
+}
