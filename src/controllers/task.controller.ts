@@ -3,7 +3,32 @@ import { Request, Response } from "express";
 import prisma from "../models/prisma";
 import { z } from "zod";
 import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
+import axios from "axios";
 
+interface MoodleCourse {
+  courseid?: number;
+  classroomid?: number;
+  fullname: string;
+  classroomname?: string;
+  classroomshortname?: string;
+  training_location: string;
+  training_location_status: string;
+  primary_trainer: string;
+  secondary_trainer: string;
+  training_location_start_date: string;
+  training_location_end_date: string;
+  shortname: string;
+  startdate: string;
+  enddate: string;
+  visible: number;
+  batch_wise: boolean;
+}
+
+interface MoodleEnrollmentResponse {
+  status: boolean;
+  message: string;
+  courses?: MoodleCourse[];
+}
 // Validation schemas
 const createTaskSchema = z.object({
   date: z
@@ -152,6 +177,10 @@ const validateUUID = (id: string): boolean => {
 const buildTaskFilters = (query: any, userId: string, userRole: string) => {
   const where: any = {};
 
+  // Filter by courseId
+  if (query.courseId) {
+    where.courseId = query.courseId;
+  }
   // Role-based filtering
   if (userRole === "LEARNER") {
     where.createdById = userId;
@@ -552,27 +581,23 @@ export class TaskController {
       });
     }
   };
-  private static generateCaseNo = async (courseId: string): string => {
+  private static generateCaseNo = async (): Promise<string> => {
     const currentYear = new Date().getFullYear();
+    const yearStart = new Date(`${currentYear}-01-01`);
+    const yearEnd = new Date(`${currentYear}-12-31T23:59:59.999`);
 
-    // Count number of logs created in this course for this year
+    // Count ALL logs across all courses for this year
     const count = await prisma.log.count({
       where: {
-        courseId,
         date: {
-          gte: new Date(`${currentYear}-01-01`),
-          lte: new Date(`${currentYear}-12-31`),
+          gte: yearStart,
+          lte: yearEnd,
         },
       },
     });
 
-    // Increment count for new log
-    const newIndex = count + 1;
-
-    // Format with padded zeroes
-    const paddedIndex = newIndex.toString().padStart(3, "0");
-
-    return `CASE-${currentYear}-${paddedIndex}`;
+    const caseNumber = (count + 1).toString().padStart(3, "0");
+    return `CASE-${currentYear}-${caseNumber}`;
   };
   // Create new log
   static createTask = async (
@@ -611,14 +636,31 @@ export class TaskController {
       }
 
       // 4. Check if learner is enrolled in the course
-      const enrollment = await prisma.courseEnrollment.findFirst({
-        where: {
-          courseId: validatedData.courseId,
-          learnerId: req.user.userId,
+      // const enrollment = await prisma.courseEnrollment.findFirst({
+      //   where: {
+      //     courseId: validatedData.courseId,
+      //     learnerId: req.user.userId,
+      //   },
+      // });
+      const moodleApiUrl =
+        "https://uatexpedite.asterhealthacademy.com/webservice/rest/server.php";
+      const wsToken = "ee3f9db9c91ca1c79eca7b7d644c93c7";
+
+      const moodleResponse = await axios.get(moodleApiUrl, {
+        params: {
+          wsfunction: "local_users_enrolled_courses",
+          wstoken: wsToken,
+          moodlewsrestformat: "json",
+          email: req.user.email,
         },
+        timeout: 15000, // 15 second timeout
       });
 
-      if (!enrollment) {
+      const moodleData: MoodleEnrollmentResponse = moodleResponse.data;
+
+      console.log("moodleData", moodleData);
+
+      if (!moodleData) {
         return res.status(403).json({
           success: false,
           error: "You are not enrolled in this course",

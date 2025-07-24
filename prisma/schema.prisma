@@ -31,56 +31,105 @@ enum Sex {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String
-  password  String
-  role      UserRole @default(LEARNER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  id          String    @id @default(cuid())
+  email       String    @unique
+  password    String
+  name        String
+  role        UserRole  @default(LEARNER)
+  phone       String?
+  city        String?
+  country     String?
+  address     String?
+  moodleId    String?   @unique
+  kycVerified Boolean   @default(false)
+  studentId   String?
+  lastLogin   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
   // Relations
-  createdLogs     Log[]              @relation("LogCreator")
-  approvedLogs    Log[]              @relation("LogApprover")
-  teachingCourses Course[]           @relation("TeacherCourses")
-  enrolledCourses CourseEnrollment[]
+  createdLogs       Log[]            @relation("LogCreator")
+  approvedLogs      Log[]            @relation("LogApprover")
+  teachingCourses   Course[]         @relation("TeacherCourses")
+  courseTeachers    CourseTeacher[]  @relation("UserCoursesTeaching") // Fixed relation name to match CourseTeacher
+  enrolledCourses   CourseEnrollment[]
+  logs              CourseLog[]
 
   @@map("users")
 }
 
 model Course {
-  id               String   @id @default(cuid())
-  title            String
-  name             String
-  enrollmentNumber String   @unique
-  facultyName      String
-  designation      String
-  hospitalName     String
-  location         String
-  contactProgram   String
-  startDate        DateTime
-  endDate          DateTime
-  status           String   @default("Active")
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                        String    @id @default(cuid())
+  title                     String
+  name                      String
+  enrollmentNumber          String    @unique
+  facultyName               String?
+  designation               String?
+  hospitalName              String?
+  location                  String
+  contactProgram            String?
+  description               String?
+  moodleId                  String?   @unique
+  shortname                 String?
+  classroomId               Int?
+  classroomName             String?
+  classroomShortname        String?
+  trainingLocation          String?
+  trainingLocationStatus    String?
+  primaryTrainer            String?
+  secondaryTrainer          String?
+  trainingLocationStartDate DateTime?
+  trainingLocationEndDate   DateTime?
+  startDate                 DateTime
+  endDate                   DateTime
+  visible                   Boolean   @default(true)
+  batchWise                 Boolean   @default(false)
+  status                    String    @default("Active")
+  teacherId                 String
 
-  // Foreign Keys
-  teacherId   String
-  teacher     User               @relation("TeacherCourses", fields: [teacherId], references: [id])
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   // Relations
-  enrollments CourseEnrollment[]
-  logs        Log[]
+  teacher       User             @relation("TeacherCourses", fields: [teacherId], references: [id])
+  courseTeachers CourseTeacher[] @relation("CourseTeachers") // Fixed relation name to match CourseTeacher
+  enrollments   CourseEnrollment[]
+  logs          Log[]
+  courseLogs    CourseLog[]
 
   @@map("courses")
 }
 
+model CourseTeacher {
+  id        String   @id @default(cuid())
+  courseId  String
+  teacherId String
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  course  Course @relation("CourseTeachers", fields: [courseId], references: [id], onDelete: Cascade)
+  teacher User   @relation("UserCoursesTeaching", fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, teacherId])
+  @@map("course_teachers")
+}
+
 model CourseEnrollment {
-  id         String   @id @default(cuid())
-  courseId   String
-  learnerId  String
-  enrolledAt DateTime @default(now())
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id          String    @id @default(cuid())
+  courseId    String
+  learnerId   String
+  progress    Float     @default(0)
+  completed   Boolean   @default(false)
+  
+  // Timestamps
+  enrolledAt  DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   // Relations
   course  Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
@@ -88,6 +137,23 @@ model CourseEnrollment {
 
   @@unique([courseId, learnerId])
   @@map("course_enrollments")
+}
+
+model CourseLog {
+  id        String   @id @default(cuid())
+  userId    String
+  courseId  String
+  action    String
+  metadata  Json?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+
+  // Relations
+  user   User   @relation(fields: [userId], references: [id])
+  course Course @relation(fields: [courseId], references: [id])
+  
+  @@map("course_logs")
 }
 
 model Log {
@@ -127,5 +193,5 @@ model Log {
   createdBy  User   @relation("LogCreator", fields: [createdById], references: [id], onDelete: Cascade)
   approvedBy User?  @relation("LogApprover", fields: [approvedById], references: [id], onDelete: SetNull)
 
-  @@map("Logs")
+  @@map("logs")
 }
