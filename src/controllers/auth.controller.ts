@@ -127,8 +127,6 @@ export class AuthController {
           timeout: 10000, // 10 second timeout
         });
 
-        console.log("moodleResponse", moodleResponse);
-
         const moodleData: MoodleLoginResponse = moodleResponse.data;
 
         // Check if Moodle authentication failed
@@ -140,8 +138,6 @@ export class AuthController {
 
         // Parse the userdata JSON string
         const userData: MoodleUserData = JSON.parse(moodleData.userdata);
-
-        console.log("userData", userData);
 
         // Check if user exists in our database
         let user = await prisma.user.findUnique({

@@ -4,6 +4,7 @@ import { Router } from 'express';
 import {SubmissionController} from '../controllers/submission.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { courseValidation } from '../middlewares/validation';
+import { prepareSubmissionData, sendEmailNotification } from '../middlewares/email.middleware';
 
 const router = Router();
 

@@ -1,5 +1,6 @@
+import { emailService } from "../services/email.service";
 import { PrismaClient } from "@prisma/client";
-import { Request, Response } from "express";
+import { NextFunction, Request, Response } from "express";
 
 const prisma = new PrismaClient();
 
@@ -146,290 +147,291 @@ export class SubmissionController {
 
   // Get all submissions for teacher dashboard
   static getSubmissions = async (
-  req: Request,
-  res: Response
-): Promise<Response> => {
-  try {
-    const {
-      search,
-      status,
-      department,
-      priority,
-      startDate,
-      endDate,
-      page,
-      limit,
-    } = req.query as SubmissionFilters;
+    req: Request,
+    res: Response
+  ): Promise<Response> => {
+    try {
+      const {
+        search,
+        status,
+        department,
+        priority,
+        startDate,
+        endDate,
+        page,
+        limit,
+      } = req.query as SubmissionFilters;
 
-    // Validate user authentication
-    if (!req.user?.userId) {
-      throw new UnauthorizedError("User not authenticated");
-    }
-
-    const teacherId = req.user.userId;
-
-    // Validate pagination
-    const { page: pageNum, limit: limitNum } = this.validatePagination(
-      page,
-      limit
-    );
-
-    // Validate date range
-    this.validateDateRange(startDate, endDate);
-
-    // Get all course IDs where this user is a teacher (either directly or through courseTeachers)
-    const teacherCourses = await prisma.course.findMany({
-      where: {
-        OR: [
-          { teacherId: teacherId }, // Direct teacher assignment
-          { 
-            courseTeachers: {
-              some: {
-                teacherId: teacherId
-              }
-            }
-          } // Through courseTeachers relation
-        ]
-      },
-      select: {
-        id: true
+      // Validate user authentication
+      if (!req.user?.userId) {
+        throw new UnauthorizedError("User not authenticated");
       }
-    });
-    console.log("teacherCourses", teacherCourses);
-    
 
-    const courseIds = teacherCourses.map(course => course.id);
-    
-    console.log("courseIds", courseIds);
-    
-    if (courseIds.length === 0) {
-      // Return empty response if teacher has no courses
-      return res.json({
-        success: true,
-        data: {
-          submissions: [],
-          pagination: {
-            page: pageNum,
-            limit: limitNum,
-            total: 0,
-            totalPages: 0,
-          },
+      const teacherId = req.user.userId;
+
+      // Validate pagination
+      const { page: pageNum, limit: limitNum } = this.validatePagination(
+        page,
+        limit
+      );
+
+      // Validate date range
+      this.validateDateRange(startDate, endDate);
+
+      // Get all course IDs where this user is a teacher (either directly or through courseTeachers)
+      const teacherCourses = await prisma.course.findMany({
+        where: {
+          OR: [
+            { teacherId: teacherId }, // Direct teacher assignment
+            {
+              courseTeachers: {
+                some: {
+                  teacherId: teacherId,
+                },
+              },
+            }, // Through courseTeachers relation
+          ],
+        },
+        select: {
+          id: true,
         },
       });
-    }
 
-    // Build where clause with proper typing
-    const where: any = {
-      courseId: {
-        in: courseIds // Only include logs from courses this teacher is associated with
-      }
-    };
-
-    // Add filters with validation
-    if (status && status !== "ALL") {
-      const validStatuses = ["DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "RESUBMITTED"];
-      if (!validStatuses.includes(status.toUpperCase())) {
-        throw new ValidationError(
-          `Invalid status. Must be one of: ${validStatuses.join(", ")}`
-        );
-      }
-      where.status = status.toUpperCase();
-    }
-
-    if (search && search.trim()) {
-      const searchTerm = search.trim();
-      where.OR = [
-        {
-          createdBy: {
-            name: {
-              contains: searchTerm,
-              mode: "insensitive",
+      const courseIds = teacherCourses.map((course) => course.id);
+      if (courseIds.length === 0) {
+        // Return empty response if teacher has no courses
+        return res.json({
+          success: true,
+          data: {
+            submissions: [],
+            pagination: {
+              page: pageNum,
+              limit: limitNum,
+              total: 0,
+              totalPages: 0,
             },
           },
-        },
-        {
-          course: {
-            title: {
-              contains: searchTerm,
-              mode: "insensitive",
-            },
-          },
-        },
-        {
-          caseNo: {
-            contains: searchTerm,
-            mode: "insensitive",
-          },
-        },
-      ];
-    }
-
-    if (department) {
-      where.course = {
-        ...where.course,
-        facultyName: {
-          contains: department,
-          mode: "insensitive",
-        },
-      };
-    }
-
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
-    }
-
-    // Get submissions with pagination
-    const [logs, total] = await Promise.all([
-      prisma.log.findMany({
-        where:{
-          ...where,
-          NOT: { status: 'DRAFT' },
-        },
-        include: {
-          course: {
-            select: {
-              id: true,
-              title: true,
-              name: true,
-              facultyName: true,
-              hospitalName: true,
-              endDate: true,
-            },
-          },
-          createdBy: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-          approvedBy: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-        },
-        orderBy: [{ createdAt: "desc" }, { status: "asc" }],
-        skip: (pageNum - 1) * limitNum,
-        take: limitNum,
-      }),
-      prisma.log.count({ where }),
-    ]);
-    
-    // Group logs by learner and course to create submissions
-    const submissionMap = new Map();
-
-    logs.forEach((log) => {
-      const key = `${log.createdById}-${log.courseId}`;
-
-      if (!submissionMap.has(key)) {
-        submissionMap.set(key, {
-          id: log.createdById || log.id,
-          learnerName: log.createdBy?.name || "Unknown",
-          learnerId: log.createdById || null,
-          taskTitle: log.course?.title || "Unknown Course",
-          submissionDate: log.submittedAt || log.createdAt,
-          dueDate: log.course?.endDate || null,
-          department: log.course?.facultyName || "Unknown",
-          priority: this.getPriority(log),
-          cases: [],
-          courseId: log.courseId || null,
         });
       }
 
-      // Add case to the submission
-      const submission = submissionMap.get(key);
-      submission.cases.push({
-        id: log.id,
-        caseNo: log.caseNo || `CASE-${log.id}`,
-        date: log.date
-          ? new Date(log.date).toISOString().split("T")[0]
-          : new Date().toISOString().split("T")[0],
-        age: log.age || null,
-        sex: log.sex || null,
-        uhid: log.uhid || null,
-        chiefComplaint: log.chiefComplaint || null,
-        historyPresenting: log.historyPresenting || null,
-        pastHistory: log.pastHistory || null,
-        personalHistory: log.personalHistory || null,
-        familyHistory: log.familyHistory || null,
-        clinicalExamination: log.clinicalExamination || null,
-        labExaminations: log.labExaminations || null,
-        diagnosis: log.diagnosis || null,
-        management: log.management || null,
-        status: log.status || "Submitted",
-        rejectionReason: log.rejectionReason || "",
-        courseId: log.courseId || null,
-      });
-    });
+      // Build where clause with proper typing
+      const where: any = {
+        courseId: {
+          in: courseIds, // Only include logs from courses this teacher is associated with
+        },
+      };
 
-    // Convert map to array and calculate submission statistics
-    const transformedSubmissions = Array.from(submissionMap.values()).map(
-      (submission) => {
-        const cases = submission.cases;
-        const totalCases = cases.length;
-        const approvedCases = cases.filter(
-          (c) => c.status === "APPROVED"
-        ).length;
-        const rejectedCases = cases.filter(
-          (c) => c.status === "REJECTED"
-        ).length;
-        const submittedCases = cases.filter(
-          (c) => c.status === "SUBMITTED" || c.status === "RESUBMITTED"
-        ).length;
-        const pendingCases = submittedCases; // Submitted cases are pending review
-
-        // Determine overall status
-        let overallStatus;
-        if (rejectedCases > 0) {
-          overallStatus = "rejected";
-        } else if (pendingCases > 0) {
-          overallStatus = "pending";
-        } else if (approvedCases === totalCases && totalCases > 0) {
-          overallStatus = "approved";
-        } else {
-          overallStatus = "draft";
+      // Add filters with validation
+      if (status && status !== "ALL") {
+        const validStatuses = [
+          "DRAFT",
+          "SUBMITTED",
+          "APPROVED",
+          "REJECTED",
+          "RESUBMITTED",
+        ];
+        if (!validStatuses.includes(status.toUpperCase())) {
+          throw new ValidationError(
+            `Invalid status. Must be one of: ${validStatuses.join(", ")}`
+          );
         }
+        where.status = status.toUpperCase();
+      }
 
-        return {
-          ...submission,
-          status: overallStatus,
-          totalCases,
-          approvedCases,
-          rejectedCases,
-          pendingCases,
-          completedCases: approvedCases,
-          // Format dates to match frontend expectations
-          submissionDate: submission.submissionDate
-            ? new Date(submission.submissionDate).toISOString()
-            : null,
-          dueDate: submission.dueDate
-            ? new Date(submission.dueDate).toISOString()
-            : null,
+      if (search && search.trim()) {
+        const searchTerm = search.trim();
+        where.OR = [
+          {
+            createdBy: {
+              name: {
+                contains: searchTerm,
+                mode: "insensitive",
+              },
+            },
+          },
+          {
+            course: {
+              title: {
+                contains: searchTerm,
+                mode: "insensitive",
+              },
+            },
+          },
+          {
+            caseNo: {
+              contains: searchTerm,
+              mode: "insensitive",
+            },
+          },
+        ];
+      }
+
+      if (department) {
+        where.course = {
+          ...where.course,
+          facultyName: {
+            contains: department,
+            mode: "insensitive",
+          },
         };
       }
-    );
 
-    return res.json({
-      success: true,
-      data: {
-        submissions: transformedSubmissions,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          totalPages: Math.ceil(total / limitNum),
+      if (startDate || endDate) {
+        where.createdAt = {};
+        if (startDate) where.createdAt.gte = new Date(startDate);
+        if (endDate) where.createdAt.lte = new Date(endDate);
+      }
+
+      // Get submissions with pagination
+      const [logs, total] = await Promise.all([
+        prisma.log.findMany({
+          where: {
+            ...where,
+            NOT: { status: "DRAFT" },
+          },
+          include: {
+            course: {
+              select: {
+                id: true,
+                title: true,
+                name: true,
+                facultyName: true,
+                hospitalName: true,
+                endDate: true,
+              },
+            },
+            createdBy: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+            approvedBy: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+          orderBy: [{ createdAt: "desc" }, { status: "asc" }],
+          skip: (pageNum - 1) * limitNum,
+          take: limitNum,
+        }),
+        prisma.log.count({ where }),
+      ]);
+
+      // Group logs by learner and course to create submissions
+      const submissionMap = new Map();
+
+      logs.forEach((log) => {
+        const key = `${log.createdById}-${log.courseId}`;
+
+        if (!submissionMap.has(key)) {
+          submissionMap.set(key, {
+            id: log.createdById || log.id,
+            learnerName: log.createdBy?.name || "Unknown",
+            learnerId: log.createdById || null,
+            taskTitle: log.course?.title || "Unknown Course",
+            submissionDate: log.submittedAt || log.createdAt,
+            dueDate: log.course?.endDate || null,
+            department: log.course?.facultyName || "Unknown",
+            priority: this.getPriority(log),
+            cases: [],
+            courseId: log.courseId || null,
+          });
+        }
+
+        // Add case to the submission
+        const submission = submissionMap.get(key);
+        submission.cases.push({
+          id: log.id,
+          caseNo: log.caseNo || `CASE-${log.id}`,
+          date: log.date
+            ? new Date(log.date).toISOString().split("T")[0]
+            : new Date().toISOString().split("T")[0],
+          age: log.age || null,
+          sex: log.sex || null,
+          uhid: log.uhid || null,
+          chiefComplaint: log.chiefComplaint || null,
+          historyPresenting: log.historyPresenting || null,
+          pastHistory: log.pastHistory || null,
+          personalHistory: log.personalHistory || null,
+          familyHistory: log.familyHistory || null,
+          clinicalExamination: log.clinicalExamination || null,
+          labExaminations: log.labExaminations || null,
+          diagnosis: log.diagnosis || null,
+          management: log.management || null,
+          status: log.status || "Submitted",
+          rejectionReason: log.rejectionReason || "",
+          courseId: log.courseId || null,
+        });
+      });
+
+      // Convert map to array and calculate submission statistics
+      const transformedSubmissions = Array.from(submissionMap.values()).map(
+        (submission) => {
+          const cases = submission.cases;
+          const totalCases = cases.length;
+          const approvedCases = cases.filter(
+            (c) => c.status === "APPROVED"
+          ).length;
+          const rejectedCases = cases.filter(
+            (c) => c.status === "REJECTED"
+          ).length;
+          const submittedCases = cases.filter(
+            (c) => c.status === "SUBMITTED" || c.status === "RESUBMITTED"
+          ).length;
+          const pendingCases = submittedCases; // Submitted cases are pending review
+
+          // Determine overall status
+          let overallStatus;
+          if (rejectedCases > 0) {
+            overallStatus = "rejected";
+          } else if (pendingCases > 0) {
+            overallStatus = "pending";
+          } else if (approvedCases === totalCases && totalCases > 0) {
+            overallStatus = "approved";
+          } else {
+            overallStatus = "draft";
+          }
+
+          return {
+            ...submission,
+            status: overallStatus,
+            totalCases,
+            approvedCases,
+            rejectedCases,
+            pendingCases,
+            completedCases: approvedCases,
+            // Format dates to match frontend expectations
+            submissionDate: submission.submissionDate
+              ? new Date(submission.submissionDate).toISOString()
+              : null,
+            dueDate: submission.dueDate
+              ? new Date(submission.dueDate).toISOString()
+              : null,
+          };
+        }
+      );
+
+      return res.json({
+        success: true,
+        data: {
+          submissions: transformedSubmissions,
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total,
+            totalPages: Math.ceil(total / limitNum),
+          },
         },
-      },
-    });
-  } catch (error) {
-    return this.handleError(error as Error, res);
-  }
-};
+      });
+    } catch (error) {
+      return this.handleError(error as Error, res);
+    }
+  };
   // static getSubmissions = async (
   //   req: Request,
   //   res: Response
@@ -745,10 +747,6 @@ export class SubmissionController {
       }
 
       const teacherId = req.user.userId;
-
-      console.log("teacherId", teacherId);
-      
-      
       // Verify user exists and teacher has access to this user's submissions
       const userExists = await prisma.user.findFirst({
         where: {
@@ -842,24 +840,24 @@ export class SubmissionController {
             hospitalName: submission.course?.hospitalName || "Unknown",
             status: submission.status?.toLowerCase() || "unknown",
             priority: getPriority(submission),
-            
-              caseNo: submission.caseNo || null,
-              date: submission.date || null,
-              age: submission.age || null,
-              sex: submission.sex || null,
-              uhid: submission.uhid || null,
-              chiefComplaint: submission.chiefComplaint || null,
-              historyPresenting: submission.historyPresenting || null,
-              pastHistory: submission.pastHistory || null,
-              personalHistory: submission.personalHistory || null,
-              familyHistory: submission.familyHistory || null,
-              clinicalExamination: submission.clinicalExamination || null,
-              labExaminations: submission.labExaminations || null,
-              diagnosis: submission.diagnosis || null,
-              management: submission.management || null,
-              rejectionReason: submission.rejectionReason || null,
-              teacherComments: submission.teacherComments || null,
-           
+
+            caseNo: submission.caseNo || null,
+            date: submission.date || null,
+            age: submission.age || null,
+            sex: submission.sex || null,
+            uhid: submission.uhid || null,
+            chiefComplaint: submission.chiefComplaint || null,
+            historyPresenting: submission.historyPresenting || null,
+            pastHistory: submission.pastHistory || null,
+            personalHistory: submission.personalHistory || null,
+            familyHistory: submission.familyHistory || null,
+            clinicalExamination: submission.clinicalExamination || null,
+            labExaminations: submission.labExaminations || null,
+            diagnosis: submission.diagnosis || null,
+            management: submission.management || null,
+            rejectionReason: submission.rejectionReason || null,
+            teacherComments: submission.teacherComments || null,
+
             timestamps: {
               createdAt: submission.createdAt,
               updatedAt: submission.updatedAt,
@@ -1214,53 +1212,6 @@ export class SubmissionController {
     } catch (error) {
       console.error("Error in getAllCasesForUserWithFilters:", error);
 
-      // Handle specific database errors
-      if (error.code === "P2002") {
-        return res.status(409).json({
-          success: false,
-          error: {
-            type: "CONFLICT",
-            message: "Database constraint violation",
-            details: error.message,
-          },
-        });
-      }
-
-      if (error.code === "P2025") {
-        return res.status(404).json({
-          success: false,
-          error: {
-            type: "NOT_FOUND",
-            message: "Record not found",
-            details: error.message,
-          },
-        });
-      }
-
-      // Handle connection errors
-      if (error.code === "P1001" || error.code === "P1002") {
-        return res.status(503).json({
-          success: false,
-          error: {
-            type: "SERVICE_UNAVAILABLE",
-            message: "Database connection error",
-            details: "Please try again later",
-          },
-        });
-      }
-
-      // Handle timeout errors
-      if (error.code === "P1008") {
-        return res.status(408).json({
-          success: false,
-          error: {
-            type: "REQUEST_TIMEOUT",
-            message: "Database query timeout",
-            details: "The request took too long to process",
-          },
-        });
-      }
-
       return this.handleError(error as Error, res);
     }
   };
@@ -1293,7 +1244,16 @@ export class SubmissionController {
           course: {
             teacherId: teacherId,
           },
-          status: "SUBMITTED",
+          OR: [{ status: "SUBMITTED" }, { status: "REJECTED" }],
+        },
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
         },
       });
 
@@ -1328,14 +1288,39 @@ export class SubmissionController {
                 name: true,
               },
             },
+            approvedBy: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
           },
         });
       });
 
-      // TODO: Send notification to student
-      // await sendNotification(updatedSubmission.createdBy.email, 'CASE_APPROVED', {...});
+      // Send email notification (fire and forget)
+      try {
+        const emailData = {
+          learnerName: updatedSubmission.createdBy.name || "Student",
+          learnerEmail: updatedSubmission.createdBy.email,
+          submissionTitle:
+            updatedSubmission.caseNo || "Medical Case Submission",
+          status: "approved",
+          teacherName: updatedSubmission.approvedBy?.name || "Teacher",
+          comments: teacherComments?.trim(),
+          submissionId: updatedSubmission.id,
+        };
 
-      return res.json({
+        emailService
+          .sendSubmissionStatusEmail(emailData)
+          .catch((error) => console.error("Email sending failed:", error));
+      } catch (emailError) {
+        console.error("Email preparation failed:", emailError);
+        // Don't fail the request if email fails
+      }
+
+      return res.status(200).json({
         success: true,
         message: "Case approved successfully",
         data: {
@@ -1346,6 +1331,7 @@ export class SubmissionController {
         },
       });
     } catch (error) {
+      console.log("error", error);
       return this.handleError(error as Error, res);
     }
   };
@@ -1393,6 +1379,20 @@ export class SubmissionController {
           },
           status: "SUBMITTED",
         },
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+          course: {
+            select: {
+              title: true,
+            },
+          },
+        },
       });
 
       if (!submission) {
@@ -1407,6 +1407,7 @@ export class SubmissionController {
           where: { id: id.trim() },
           data: {
             status: "REJECTED",
+            rejectedByID: teacherId,
             rejectionReason: rejectionReason.trim(),
             teacherComments: teacherComments?.trim() || null,
             rejectedAt: new Date(),
@@ -1426,14 +1427,40 @@ export class SubmissionController {
                 name: true,
               },
             },
+            rejectedBy: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
           },
         });
       });
 
-      // TODO: Send notification to student
-      // await sendNotification(updatedSubmission.createdBy.email, 'CASE_REJECTED', {...});
+      // Send email notification (fire and forget)
+      try {
+        const emailData = {
+          learnerName: updatedSubmission.createdBy.name || "Student",
+          learnerEmail: updatedSubmission.createdBy.email,
+          submissionTitle:
+            updatedSubmission.course?.title || "Medical Case Submission",
+          status: "rejected",
+          teacherName: updatedSubmission.rejectedBy?.name || "Teacher",
+          comments: teacherComments?.trim(),
+          rejectionReason: rejectionReason.trim(),
+          submissionId: updatedSubmission.id,
+        };
 
-      return res.json({
+        emailService
+          .sendSubmissionStatusEmail(emailData)
+          .catch((error) => console.error("Email sending failed:", error));
+      } catch (emailError) {
+        console.error("Email preparation failed:", emailError);
+        // Don't fail the request if email fails
+      }
+
+      return res.status(200).json({
         success: true,
         message: "Case rejected successfully",
         data: {
@@ -1442,6 +1469,12 @@ export class SubmissionController {
           rejectedAt: updatedSubmission.rejectedAt,
           rejectionReason: updatedSubmission.rejectionReason,
           teacherComments: updatedSubmission.teacherComments,
+          rejectedBy: updatedSubmission.rejectedBy
+            ? {
+                id: updatedSubmission.rejectedBy.id,
+                name: updatedSubmission.rejectedBy.name,
+              }
+            : null,
         },
       });
     } catch (error) {

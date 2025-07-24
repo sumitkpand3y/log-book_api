@@ -12,6 +12,8 @@ import courseRoutes from './routes/course.routes';
 // import userRoutes from './routes/userRoutes';
 import { errorHandler } from './middlewares/error.middleware';
 import submissionRoutes from './routes/submission.routes';
+import { databaseService } from './services/database.service';
+import { emailService } from './services/email.service';
 // import { notFound } from './middleware/notFound';
 
 // Load environment variables
@@ -54,12 +56,19 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  const dbHealth = await databaseService.healthCheck();
+  const emailHealth = await emailService.testConnection();
+  
   res.json({
     success: true,
     message: 'Medical Case Management API is running',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    services: {
+      database: dbHealth ? 'healthy' : 'unhealthy',
+      email: emailHealth ? 'healthy' : 'unhealthy'
+    }
   });
 });
 
@@ -80,9 +89,41 @@ app.use('*', (req, res) => {
 // Global error handler
 app.use(errorHandler);
 
+const startServer = async () => {
+  try {
+    // Connect to database
+    await databaseService.connect();
+    
+    // Test email service
+    await emailService.testConnection();
+    
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`🚀 Server is running on port ${PORT}`);
+      console.log(`📱 API ready for mobile app integration`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`📋 Health check: http://localhost:${PORT}/health`);
+        console.log(`📊 API Base URL: http://localhost:${PORT}/api`);
+      }
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
 // Graceful shutdown
-const gracefulShutdown = (signal: string) => {
+const gracefulShutdown = async (signal: string) => {
   console.log(`Received ${signal}. Graceful shutdown...`);
+  
+  try {
+    await databaseService.disconnect();
+    console.log('✅ Database disconnected');
+  } catch (error) {
+    console.error('❌ Error disconnecting database:', error);
+  }
   
   process.exit(0);
 };
@@ -90,16 +131,22 @@ const gracefulShutdown = (signal: string) => {
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
-  console.log(`📱 API ready for mobile app integration`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit the process in production
   if (process.env.NODE_ENV !== 'production') {
-    console.log(`📋 Health check: http://localhost:${PORT}/health`);
-    console.log(`📊 API Base URL: http://localhost:${PORT}/api`);
+    process.exit(1);
   }
 });
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+// Start the server
+startServer();
 
 export default app;

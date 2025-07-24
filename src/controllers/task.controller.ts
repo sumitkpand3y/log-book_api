@@ -658,8 +658,6 @@ export class TaskController {
 
       const moodleData: MoodleEnrollmentResponse = moodleResponse.data;
 
-      console.log("moodleData", moodleData);
-
       if (!moodleData) {
         return res.status(403).json({
           success: false,

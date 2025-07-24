@@ -50,6 +50,7 @@ model User {
   // Relations
   createdLogs       Log[]            @relation("LogCreator")
   approvedLogs      Log[]            @relation("LogApprover")
+  rejectedLogs      Log[]            @relation("LogRejecter")
   teachingCourses   Course[]         @relation("TeacherCourses")
   courseTeachers    CourseTeacher[]  @relation("UserCoursesTeaching") // Fixed relation name to match CourseTeacher
   enrolledCourses   CourseEnrollment[]
@@ -187,11 +188,13 @@ model Log {
   courseId     String
   createdById  String
   approvedById String?
+  rejectedByID String?
 
   // Relations
   course     Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
   createdBy  User   @relation("LogCreator", fields: [createdById], references: [id], onDelete: Cascade)
   approvedBy User?  @relation("LogApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  rejectedBy User?  @relation("LogRejecter", fields: [rejectedByID], references: [id], onDelete: SetNull)
 
   @@map("logs")
 }
